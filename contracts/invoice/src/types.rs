@@ -172,6 +172,10 @@ pub struct AttestationPayload {
 /// contract (from the separate `underwrite-contract` repo). This contract
 /// has no crate dependency on that repo, so this shape must be kept in
 /// sync with its `get_agent` return type by hand.
+///
+/// See `docs/AGENT_REGISTRY_INTERFACE.md` for the normative spec: the
+/// registry's `Agent` must have exactly these two fields (extra fields break
+/// decoding), and `pubkey` is a 65-byte uncompressed SEC1 secp256k1 key.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Agent {

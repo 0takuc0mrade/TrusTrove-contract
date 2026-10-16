@@ -1169,6 +1169,11 @@ impl InvoiceContract {
     /// signature and checks the signer against that registry; it does not
     /// implement any agent logic itself.
     ///
+    /// The full interface the agent-registry must implement (`get_agent`
+    /// signature, `Agent` shape), plus the payload encoding, domain separator
+    /// and signature scheme verified here, is specified in
+    /// [`docs/AGENT_REGISTRY_INTERFACE.md`](https://github.com/TrusTrove/TrusTrove-contract/blob/main/docs/AGENT_REGISTRY_INTERFACE.md).
+    ///
     /// # Arguments
     /// * `env` - The Soroban environment.
     /// * `invoice_id` - The invoice being attested.

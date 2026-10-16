@@ -59,8 +59,18 @@ but the Stellar CLI is expected to be at the latest version
 ### Soroban Resource Model
 
 Soroban charges fees based on a budget model: each operation consumes
-CPU instructions, memory, and ledger I/O. The following are approximate
-relative costs based on code analysis.
+CPU instructions, memory, and ledger I/O.
+
+**Measured numbers** for the hot paths (`invoice::create`, `invoice::repay`,
+`pool::deposit`, `pool::fund_invoice`) come from the automated budget harness
+in [`contracts/pool/src/bench.rs`](../contracts/pool/src/bench.rs) (#734). It
+runs the real registry/invoice/escrow/pool contracts at 0, 10 and 50
+outstanding invoices and reports CPU instructions, memory bytes, ledger
+entries written, bytes written and TTL bumps per call — see
+[Automated Budget Benchmarks](#automated-budget-benchmarks) below. Rows marked
+**[measured](#automated-budget-benchmarks)** take their CPU/memory figures from
+that output; the remaining rows' cross-contract-call and transfer counts and
+the *Relative Budget* column are still derived from code analysis.
 
 | Operation | Cross-Contract Calls | Token Transfers | CPU Instructions | Memory (Bytes) | Relative Budget |
 |-----------|---------------------|-----------------|------------------|----------------|-----------------|
@@ -68,18 +78,18 @@ relative costs based on code analysis.
 | `registry::revoke` | 0 | 0 | — | — | Very Low |
 | `registry::get_profile_count` | 0 | 0 | — | — | Very Low |
 | `registry::list_profiles` | 0 | 0 | — | — | Low (O(limit), ≤ 50) |
-| `invoice::create` | 2 (`is_verified` ×2) | 0 | — | — | Low |
+| `invoice::create` | 2 (`is_verified` ×2) | 0 | [measured](#automated-budget-benchmarks) | [measured](#automated-budget-benchmarks) | Low |
 | `invoice::batch_create` | 2 per entry (`is_verified` ×2) | 0 | — | — | Low per entry, **up to 50× `create`** |
 | `invoice::list_for_financing` | 0 | 0 | — | — | Low |
 | `invoice::batch_list_for_financing` | 0 | 0 | — | — | Low per entry, **up to 50× `list_for_financing`** |
 | `invoice::mark_funded` | 0 | 0 | — | — | Low |
-| `invoice::repay` | 1 (`receive_repayment`) | 1 (buyer → pool) | — | — | Medium |
+| `invoice::repay` | 1 (`receive_repayment`) | 1 (buyer → pool) | [measured](#automated-budget-benchmarks) | [measured](#automated-budget-benchmarks) | Medium |
 | `invoice::trigger_default` | 1 (`handle_default`) | 0 | — | — | Medium |
 | `pool::deposit` (before refactor) | 0 | 1 (LP → pool) | ~456,800 | ~73,400 | Low-Medium |
 | `pool::deposit` (after `mint()`) | 0 | 1 (LP → pool) | 457,992 | 73,495 | Low-Medium |
 | `pool::withdraw` (before refactor) | 0 | 1 (pool → LP) | ~450,500 | ~63,550 | Medium |
 | `pool::withdraw` (after `burn()`) | 0 | 1 (pool → LP) | 451,634 | 63,660 | Medium |
-| `pool::fund_invoice` | 6 (`get_status`, `get_funding_asset`, `get_face_value`, `get_discount_bps`, `lock`, `mark_funded`) | 1 (pool → escrow) | — | — | **High** |
+| `pool::fund_invoice` | 6 (`get_status`, `get_funding_asset`, `get_face_value`, `get_discount_bps`, `lock`, `mark_funded`) | 1 (pool → escrow) | [measured](#automated-budget-benchmarks) | [measured](#automated-budget-benchmarks) | **High** |
 | `pool::batch_fund_invoice` | 6 per entry | 1 per entry | — | — | **High** per entry, **up to 50× `fund_invoice`** |
 | `pool::receive_repayment` | 0 | 0 | — | — | Low |
 | `pool::handle_default` | 1 (`escrow::handle_default`) | 1 (escrow → pool) | — | — | Medium |
@@ -95,6 +105,50 @@ instance-local and costs the same in every contract; it is also what pushed a fe
 long-running integration tests past the default _test-host_ budget, which is why
 `pool_factory`'s test `setup()` lifts that budget — see
 [Batch Operations](#batch-operations).
+
+### Automated Budget Benchmarks
+
+`bench_core_flows_budget` in
+[`contracts/pool/src/bench.rs`](../contracts/pool/src/bench.rs) measures each
+hot path with the Soroban test host's budget tracker (`env.budget()`), resetting
+the budget immediately before the measured call so setup work never leaks into
+a row. Ledger I/O is derived by diffing the ledger snapshot before and after
+the call.
+
+```bash
+# Print the table (and write target/budget-bench.csv)
+cargo test -p trusttrove-pool bench_ -- --nocapture
+
+# Refresh the committed baseline, then review the diff
+BENCH_OUT=docs/benchmarks/budget.csv cargo test -p trusttrove-pool bench_
+git diff docs/benchmarks/budget.csv
+```
+
+Output is a sorted CSV with no timestamps, so two runs diff cleanly:
+
+```text
+op,volume,cpu_insns,mem_bytes,entries_written,bytes_written,ttl_bumps
+invoice::create,0,…,…,…,…,…
+invoice::create,10,…
+…
+pool::fund_invoice,50,…
+```
+
+| Column | Meaning |
+|--------|---------|
+| `volume` | Invoices already funded and outstanding when the call runs (0 / 10 / 50) |
+| `cpu_insns` | CPU instructions charged by the test host |
+| `mem_bytes` | Memory bytes charged by the test host |
+| `entries_written` | Ledger entries created, modified or deleted |
+| `bytes_written` | XDR size of the written entries (post-call) |
+| `ttl_bumps` | Entries whose TTL was extended without a data change |
+
+The test also **fails** if any measured call exceeds the per-transaction network
+limits (100M CPU instructions / 40 MiB memory), so a change that pushes
+`fund_invoice` past what a single transaction can carry is caught in CI.
+Limitations: ledger *reads* are not counted separately (their cost is included
+in `cpu_insns`), and test-host numbers track — but are not identical to — the
+fees simulated by RPC `simulateTransaction` against a real network.
 
 ### Measured Benchmarks: `deposit()` and `withdraw()` (SEP-41 mint/burn refactor)
 
@@ -263,7 +317,9 @@ are provided where available.
 
 - Mainnet deployment support (currently testnet only)
 - Formal verification or symbolic execution audit
-- `cargo-soroban` integration for automated WASM budget reporting
+- `cargo-soroban` integration for automated WASM budget reporting — test-host
+  budget harness shipped (#734, [Automated Budget Benchmarks](#automated-budget-benchmarks));
+  on-network WASM fee reporting via `simulateTransaction` is still planned
 - TypeScript SDK for contract interaction
 - Automated fuzz testing across all four contracts
 - Smart-contract upgrade mechanism (`__constructor` + `__upgrade`)
