@@ -75,3 +75,18 @@ pub fn unpaused(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "unpaused"), admin.clone()), ());
 }
+
+/// Emitted by `set_verifier` when the admin assigns (or replaces) the
+/// verifier role. `admin` is indexed; the data is the new verifier address.
+pub fn verifier_set(env: &Env, admin: &Address, verifier: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "verifier_set"), admin.clone()),
+        verifier.clone(),
+    );
+}
+
+/// Emitted by `remove_verifier` when the admin clears the verifier role.
+pub fn verifier_removed(env: &Env, admin: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "verifier_removed"), admin.clone()), ());
+}

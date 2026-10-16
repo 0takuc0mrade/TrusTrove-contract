@@ -706,10 +706,40 @@ impl RegistryContract {
         true
     }
 
-    pub fn verify_profile(env: Env, address: Address, verify: bool) -> bool {
+    /// Sets (or clears) the verification flag on a registered profile.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `caller` - The address authorizing the call. Must be either the
+    ///   stored admin (`DataKey::Admin`) or the stored verifier
+    ///   (`DataKey::Verifier`, see [`set_verifier`](Self::set_verifier)).
+    /// * `address` - The registered address whose verification changes.
+    /// * `verify` - `true` to verify (also clears the revoked flag), `false`
+    ///   to un-verify (also marks the profile revoked).
+    ///
+    /// # Auth
+    /// * Requires `caller.require_auth()`, where `caller` is the admin or the
+    ///   verifier (#732). This lets day-to-day KYC decisions be delegated to an
+    ///   operational key without handing out admin control.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotInitialized` if the contract has not been
+    ///   initialized.
+    /// * `RegistryError::Unauthorized` if `caller` is neither the admin nor
+    ///   the verifier.
+    /// * `RegistryError::NotFound` if no profile is stored for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the profile is updated.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.verify_profile(&verifier, &issuer, &true);
+    /// ```
+    pub fn verify_profile(env: Env, caller: Address, address: Address, verify: bool) -> bool {
         require_not_paused(&env);
-        let admin = Self::require_admin(&env);
-        admin.require_auth();
+        Self::require_admin_or_verifier(&env, &caller);
+        caller.require_auth();
         let key = DataKey::Profile(address.clone());
         let mut profile: Profile = env
             .storage()
@@ -791,6 +821,67 @@ impl RegistryContract {
         env.storage().instance().set(&DataKey::Admin, &new_admin);
         events::admin_transferred(&env, &admin, &new_admin);
         Self::extend_instance_ttl(&env);
+    }
+
+    /// Assigns the verifier role to `verifier`, replacing any previous one.
+    ///
+    /// The verifier may call [`verify_profile`](Self::verify_profile) in
+    /// addition to the admin. It is deliberately a narrow, operational role
+    /// (#732): it cannot call `transfer_admin`, `transfer_ownership`, `pause`,
+    /// `unpause`, `revoke`, `reinstate`, `batch_register_*`, `set_verifier`
+    /// or `remove_verifier` — all of those stay admin-only.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `verifier` - The address to grant the verifier role.
+    ///
+    /// # Auth
+    /// * Requires `admin.require_auth()` — only the stored admin may assign
+    ///   the verifier.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotInitialized` if the contract has not been
+    ///   initialized.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.set_verifier(&verifier);
+    /// ```
+    pub fn set_verifier(env: Env, verifier: Address) {
+        require_not_paused(&env);
+        let admin = Self::require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Verifier, &verifier);
+        events::verifier_set(&env, &admin, &verifier);
+        Self::extend_instance_ttl(&env);
+    }
+
+    /// Clears the verifier role so only the admin can call `verify_profile`.
+    ///
+    /// Idempotent: calling it when no verifier is set is a no-op apart from
+    /// the emitted `verifier_removed` event.
+    ///
+    /// # Auth
+    /// * Requires `admin.require_auth()`.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotInitialized` if the contract has not been
+    ///   initialized.
+    pub fn remove_verifier(env: Env) {
+        require_not_paused(&env);
+        let admin = Self::require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().remove(&DataKey::Verifier);
+        events::verifier_removed(&env, &admin);
+        Self::extend_instance_ttl(&env);
+    }
+
+    /// Returns the current verifier, or `None` if the role is unassigned.
+    ///
+    /// # Auth
+    /// * No `require_auth()` call is made — this is a read-only view.
+    pub fn get_verifier(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Verifier)
     }
 
     /// Engages the emergency circuit breaker.
@@ -894,6 +985,19 @@ impl RegistryContract {
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(env, RegistryError::NotInitialized))
+    }
+
+    /// Panics with `Unauthorized` unless `caller` is the stored admin or the
+    /// stored verifier. Does not call `require_auth` — the caller does that.
+    fn require_admin_or_verifier(env: &Env, caller: &Address) {
+        let admin = Self::require_admin(env);
+        if *caller == admin {
+            return;
+        }
+        let verifier: Option<Address> = env.storage().instance().get(&DataKey::Verifier);
+        if verifier.as_ref() != Some(caller) {
+            panic_with_error!(env, RegistryError::Unauthorized);
+        }
     }
 
     fn require_initialized(env: &Env) {

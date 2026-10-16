@@ -3731,8 +3731,8 @@ mod real_registry_integration {
         // explicitly verified by the admin before is_verified() returns true.
         assert!(!registry.is_verified(&issuer));
         assert!(!registry.is_verified(&buyer));
-        registry.verify_profile(&issuer, &true);
-        registry.verify_profile(&buyer, &true);
+        registry.verify_profile(&admin, &issuer, &true);
+        registry.verify_profile(&admin, &buyer, &true);
         assert!(registry.is_verified(&issuer));
         assert!(registry.is_verified(&buyer));
         assert_eq!(

@@ -6,6 +6,7 @@ use soroban_sdk::{
 };
 use trusttrove_pause::{require_not_paused, set_paused};
 
+mod bench;
 mod constants;
 mod errors;
 mod events;
