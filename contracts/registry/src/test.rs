@@ -2660,7 +2660,9 @@ fn test_verify_profile_as_verifier_requires_verifier_signature() {
             sub_invokes: &[],
         },
     }]);
-    assert!(client.try_verify_profile(&verifier, &issuer, &true).is_err());
+    assert!(client
+        .try_verify_profile(&verifier, &issuer, &true)
+        .is_err());
     assert!(!client.is_verified(&issuer));
 }
 

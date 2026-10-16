@@ -87,12 +87,7 @@ fn ledger_state(env: &Env) -> LedgerState {
 }
 
 /// Runs `f` with a freshly reset budget and returns its resource usage.
-fn measure<T>(
-    env: &Env,
-    op: &'static str,
-    volume: u32,
-    f: impl FnOnce() -> T,
-) -> (T, Measurement) {
+fn measure<T>(env: &Env, op: &'static str, volume: u32, f: impl FnOnce() -> T) -> (T, Measurement) {
     let before = ledger_state(env);
     // `reset_unlimited` zeroes the counters without imposing the default
     // test-host limit, so setup work never leaks into a measurement and a
@@ -231,9 +226,8 @@ fn run_at_volume(volume: u32) -> StdVec<Measurement> {
 }
 
 fn to_csv(rows: &[Measurement]) -> StdString {
-    let mut out = StdString::from(
-        "op,volume,cpu_insns,mem_bytes,entries_written,bytes_written,ttl_bumps\n",
-    );
+    let mut out =
+        StdString::from("op,volume,cpu_insns,mem_bytes,entries_written,bytes_written,ttl_bumps\n");
     for r in rows {
         out.push_str(&format!(
             "{},{},{},{},{},{},{}\n",
@@ -271,8 +265,7 @@ fn write_report(csv: &str) {
 
 #[test]
 fn bench_core_flows_budget() {
-    let mut rows: StdVec<Measurement> =
-        VOLUMES.iter().flat_map(|v| run_at_volume(*v)).collect();
+    let mut rows: StdVec<Measurement> = VOLUMES.iter().flat_map(|v| run_at_volume(*v)).collect();
     // Deterministic order so runs diff cleanly regardless of execution order.
     rows.sort_by(|a, b| a.op.cmp(b.op).then(a.volume.cmp(&b.volume)));
 
@@ -282,7 +275,12 @@ fn bench_core_flows_budget() {
 
     for r in &rows {
         assert!(r.cpu_insns > 0, "{} @ {}: no CPU recorded", r.op, r.volume);
-        assert!(r.mem_bytes > 0, "{} @ {}: no memory recorded", r.op, r.volume);
+        assert!(
+            r.mem_bytes > 0,
+            "{} @ {}: no memory recorded",
+            r.op,
+            r.volume
+        );
         assert!(
             r.entries_written > 0,
             "{} @ {}: expected ledger writes",
